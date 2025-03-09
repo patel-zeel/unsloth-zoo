@@ -198,6 +198,7 @@ def train_on_responses_only(
         response_part    = tokenizer._unsloth_output_part
     pass
 
+    # Detect VLM by detecting vision layers
     IS_VISION_MODEL = False
     # This approach will support models irrespective 
     # of depth of vision layer in the parent module (e.g. peft).
@@ -209,12 +210,14 @@ def train_on_responses_only(
     
     # Get the text tokenizer from the combined tokenizer
     if IS_VISION_MODEL:
-        tokenizer = tokenizer.tokenizer
+        text_tokenizer = tokenizer.tokenizer
+    else:
+        text_tokenizer = tokenizer
     pass
 
     # Get most common tokens since tokenizers can tokenize stuff differently!
-    Q_must, Q_left, Q_right = _find_common_token_ids(instruction_part, tokenizer)
-    A_must, A_left, A_right = _find_common_token_ids(response_part,    tokenizer)
+    Q_must, Q_left, Q_right = _find_common_token_ids(instruction_part, text_tokenizer)
+    A_must, A_left, A_right = _find_common_token_ids(response_part,    text_tokenizer)
 
     # Store some temporary stuff
     A_first = A_must[0]
@@ -302,42 +305,35 @@ def train_on_responses_only(
         return { "labels" : all_labels }
     pass
 
-<<<<<<< HEAD
     if not IS_VISION_MODEL:
+        from multiprocessing import cpu_count
+        num_proc = cpu_count()
+
         if hasattr(trainer, "train_dataset") and trainer.train_dataset is not None:
-            trainer.train_dataset = trainer.train_dataset.map(_train_on_responses_only, batched = True)
+            trainer.train_dataset = trainer.train_dataset.map(_train_on_responses_only, batched = True, num_proc = num_proc)
         pass
         
         if hasattr(trainer, "eval_dataset")  and trainer.eval_dataset  is not None:
             # Eval datasets could be a dict!
             if type(trainer.eval_dataset) is dict:
                 for key, value in trainer.eval_dataset.items():
-                    trainer.eval_dataset[key] = value.map(_train_on_responses_only, batched = True)
+                    trainer.eval_dataset[key] = value.map(_train_on_responses_only, batched = True, num_proc = num_proc)
             else:
-                trainer.eval_dataset = trainer.eval_dataset.map(_train_on_responses_only, batched = True)
+                trainer.eval_dataset = trainer.eval_dataset.map(_train_on_responses_only, batched = True, num_proc = num_proc)
             pass
-=======
-    from multiprocessing import cpu_count
-    num_proc = cpu_count()
-
-    if hasattr(trainer, "train_dataset") and trainer.train_dataset is not None:
-        trainer.train_dataset = trainer.train_dataset.map(_train_on_responses_only, batched = True, num_proc = num_proc)
-    pass
-    
-    if hasattr(trainer, "eval_dataset")  and trainer.eval_dataset  is not None:
-        # Eval datasets could be a dict!
-        if type(trainer.eval_dataset) is dict:
-            for key, value in trainer.eval_dataset.items():
-                trainer.eval_dataset[key] = value.map(_train_on_responses_only, batched = True, num_proc = num_proc)
-        else:
-            trainer.eval_dataset = trainer.eval_dataset.map(_train_on_responses_only, batched = True, num_proc = num_proc)
->>>>>>> 31fce522e291e95c3829dc8cc8ac29e03e6c0580
         pass
 
-        # Check if all labels randomnly got masked to nothing - maybe wrong chat template?
-        from .training_utils import fix_zero_training_loss
-        fix_zero_training_loss(None, tokenizer, trainer.train_dataset)
+        # Edit data collator as well if not DataCollatorForSeq2Seq
+        from transformers import DataCollatorForSeq2Seq
+        if hasattr(trainer, "data_collator") and \
+            not isinstance(trainer.data_collator, DataCollatorForSeq2Seq):
+            trainer.data_collator = DataCollatorForSeq2Seq(tokenizer = tokenizer)
+        pass
     else:
+        from unsloth_zoo.vision_utils import UnslothVisionDataCollator
+        import warnings
+        if not hasattr(trainer, "data_collator") or not isinstance(trainer.data_collator, UnslothVisionDataCollator):
+            warnings.warn("Unsloth: Vision models generally need `UnslothVisionDataCollator`.\nfrom unsloth_zoo.vision_utils import UnslothVisionDataCollator.\n\nIgnore this warning if you are using a custom data collator.")
         class DataCollator:
             old_collator = trainer.data_collator
             def __call__(self, examples):
@@ -345,20 +341,10 @@ def train_on_responses_only(
                 batch["labels"] = _train_on_responses_only(batch)["labels"]
                 return batch
         trainer.data_collator = DataCollator()
-    pass
-
-<<<<<<< HEAD
-=======
-    # Edit data collator as well if not DataCollatorForSeq2Seq
-    from transformers import DataCollatorForSeq2Seq
-    if hasattr(trainer, "data_collator") and \
-        not isinstance(trainer.data_collator, DataCollatorForSeq2Seq):
-        trainer.data_collator = DataCollatorForSeq2Seq(tokenizer = tokenizer)
 
     # Check if all labels randomnly got masked to nothing - maybe wrong chat template?
     from .training_utils import fix_zero_training_loss
     fix_zero_training_loss(None, tokenizer, trainer.train_dataset)
->>>>>>> 31fce522e291e95c3829dc8cc8ac29e03e6c0580
     return trainer
 pass
 
